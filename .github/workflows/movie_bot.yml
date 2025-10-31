@@ -1,0 +1,77 @@
+name: Movie Byte Bot (v2.1 - Manual Inputs)
+
+on:
+  schedule:
+    # (الجدول الزمني للخطة v2.0 - لا تغيير هنا)
+    
+    # 1. "فيلم اليوم" (9 صباحاً بغداد = 6:00 UTC)
+    - cron: '0 6 * * *'
+    
+    # 2. "اختيار عشوائي" (3 عصراً بغداد = 12:00 UTC)
+    - cron: '0 12 * * *'
+    
+    # 3. "مسلسل الأسبوع" (الأربعاء 8 مساءً بغداد = 17:00 UTC)
+    - cron: '0 17 * * 2' # (2 = الأربعاء)
+    
+    # 4. "فيلم السهرة" (الخميس والجمعة 10 مساءً بغداد = 19:00 UTC)
+    - cron: '0 19 * * 3,4' # (3 = الخميس, 4 = الجمعة)
+
+  # (v2.1) التحديث الأهم هنا: إضافة خيارات للاختبار اليدوي
+  workflow_dispatch:
+    inputs:
+      task_to_run:
+        type: choice
+        description: 'اختر المهمة التي تريد اختبارها يدوياً'
+        required: true
+        default: 'auto'
+        options:
+          - auto
+          - daily_movie
+          - random_movie
+          - weekend_movie
+          - weekly_series
+      # (v2.1) إضافة ترجمة عربية بسيطة في الواجهة
+      _description_auto:
+        description: 'auto: (افتراضي) دع البوت يقرر حسب الوقت المجدول'
+        required: false
+      _description_daily:
+        description: 'daily_movie: اختبار "فيلم اليوم" (الأعلى تقييماً)'
+        required: false
+      _description_random:
+        description: 'random_movie: اختبار "اختيار عشوائي"'
+        required: false
+      _description_weekend:
+        description: 'weekend_movie: اختبار "فيلم السهرة" (الرائج)'
+        required: false
+      _description_weekly:
+        description: 'weekly_series: اختبار "مسلسل الأسبوع" (الرائج)'
+        required: false
+
+jobs:
+  run-movie-bot:
+    runs-on: ubuntu-latest
+    env:
+      # (المفاتيح الثلاثة المطلوبة - لا تغيير)
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      CHANNEL_USERNAME: ${{ secrets.CHANNEL_USERNAME }}
+      TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+      
+      # (v2.1) متغيران جديدان لقراءة الاختيار اليدوي
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      MANUAL_TASK_INPUT: ${{ github.event.inputs.task_to_run }}
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install Dependencies
+        run: pip install requests
+        
+      - name: Run Python Script (Smart Logic v2.1)
+        run: python movie_bot.py
+

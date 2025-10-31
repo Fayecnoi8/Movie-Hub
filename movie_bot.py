@@ -1,8 +1,10 @@
 # =============================================================================
-#    *** بوت Movie Byte - الإصدار 2.1 (مع خيارات التشغيل اليدوي) ***
+#    *** بوت Movie Byte - الإصدار 2.2 (احترافي) ***
 #
-#  (جديد) يقرأ خيار "MANUAL_TASK_INPUT" من ملف التشغيل YML
-#  (جديد) يسمح للمستخدم باختيار المهمة التي يريد اختبارها يدوياً
+#  (جديد) يجلب البوستر العمودي (w500) بدلاً من الأفقي.
+#  (جديد) يجلب "منصات المشاهدة" (Watch Providers)
+#  (جديد) الرسالة "ذكية": تخفي الأسطر إذا كانت البيانات (مثل الملخص) غير موجودة.
+#  (جديد) تذييل مخصص (@F_Aflam).
 # =============================================================================
 
 import requests
@@ -16,7 +18,7 @@ import random
 try:
     BOT_TOKEN = os.environ['BOT_TOKEN']
     CHANNEL_USERNAME = os.environ['CHANNEL_USERNAME'] # يجب أن يبدأ بـ @
-    TMDB_API_KEY = os.environ['TMDB_API_KEY']         # (المفتاح من ملف HTML)
+    TMDB_API_KEY = os.environ['TMDB_API_KEY']
     
 except KeyError as e:
     print(f"!!! خطأ: متغير البيئة الأساسي غير موجود: {e}")
@@ -25,9 +27,9 @@ except KeyError as e:
 
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 TMDB_API_URL = "https://api.themoviedb.org/3"
-IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500" # للبوستر
-BACKDROP_IMAGE_URL = "https://image.tmdb.org/t/p/w780" # للخلفية (أجمل)
-API_KEY_PARAM = {'api_key': TMDB_API_KEY, 'language': 'ar-SA'} # (v2.0) بارامتر مشترك
+# (v2.2) تم التغيير إلى البوستر العمودي (w500) بناءً على طلبك
+POSTER_IMAGE_URL = "https://image.tmdb.org/t/p/w500" 
+API_KEY_PARAM = {'api_key': TMDB_API_KEY, 'language': 'ar-SA'} 
 
 # (إعداد لغة عربية للتاريخ)
 try:
@@ -80,93 +82,115 @@ def post_text_to_telegram(text_content):
         error_message = getattr(response, 'text', 'لا يوجد رد من تيليجرام')
         print(f"!!! فشل إرسال (التقرير النصي): {e} - {error_message}")
 
-# --- [3] دوال جلب البيانات وتنسيقها (TMDB) ---
+# --- [3] دوال جلب البيانات وتنسيقها (TMDB v2.2) ---
 
 def get_full_media_details(media_id, media_type='movie'):
     """
-    (v2.0) يجلب كل تفاصيل الفيلم/المسلسل المطلوبة (3 طلبات API)
+    (v2.2) يجلب كل تفاصيل الفيلم/المسلسل المطلوبة (4 طلبات API)
     """
     print(f"... جاري جلب التفاصيل الكاملة لـ {media_type} ID: {media_id}")
     try:
-        # 1. التفاصيل الأساسية
+        # 1. التفاصيل الأساسية (المدة، الملخص، التقييم)
         response_details = requests.get(f"{TMDB_API_URL}/{media_type}/{media_id}", params=API_KEY_PARAM, timeout=10)
         response_details.raise_for_status()
         details = response_details.json()
 
-        # 2. طاقم العمل
+        # 2. طاقم العمل (الممثلين)
         response_credits = requests.get(f"{TMDB_API_URL}/{media_type}/{media_id}/credits", params=API_KEY_PARAM, timeout=10)
         response_credits.raise_for_status()
         credits = response_credits.json()
         
-        # 3. التريلر
-        params_videos = {**API_KEY_PARAM, 'language': 'ar-SA,en-US,null'} # البحث بلغات متعددة
+        # 3. التريلر (المقطع الدعائي)
+        params_videos = {**API_KEY_PARAM, 'language': 'ar-SA,en-US,null'} 
         response_videos = requests.get(f"{TMDB_API_URL}/{media_type}/{media_id}/videos", params=params_videos, timeout=10)
         response_videos.raise_for_status()
         videos = response_videos.json()
         
-        print(">>> تم جلب التفاصيل الكاملة بنجاح.")
-        return details, credits, videos
+        # 4. (جديد) منصات المشاهدة
+        response_providers = requests.get(f"{TMDB_API_URL}/{media_type}/{media_id}/watch/providers", params=API_KEY_PARAM, timeout=10)
+        response_providers.raise_for_status()
+        providers = response_providers.json()
+
+        print(">>> تم جلب التفاصيل الكاملة (4 طلبات) بنجاح.")
+        return details, credits, videos, providers
         
     except Exception as e:
         print(f"!!! فشل جلب التفاصيل الكاملة: {e}")
-        return None, None, None
+        return None, None, None, None
 
-def format_telegram_post(details, credits, videos, post_title):
+def format_telegram_post(details, credits, videos, providers, post_title):
     """
-    (v2.0) ينسق كل البيانات في رسالة تيليجرام احترافية واحدة
-    (تنفيذ لطلبك: اسم، سنة، تصنيف، ممثلين، مدة، ملخص، تريلر، بوستر)
+    (v2.2) ينسق كل البيانات في رسالة تيليجرام "ذكية" واحترافية
     """
     
-    # استخراج البيانات
+    # --- استخراج البيانات ---
     media_type = 'movie' if details.get('title') else 'tv'
     title = details.get('title') or details.get('name', 'N/A')
     year = (details.get('release_date') or details.get('first_air_date', 'N/A')).split('-')[0]
-    rating = f"{details.get('vote_average', 0):.1f} / 10"
-    
+    rating_raw = details.get('vote_average', 0)
+    rating = f"{rating_raw:.1f} / 10" if rating_raw > 0 else None
+
     if media_type == 'movie':
         minutes = details.get('runtime', 0)
-        duration = f"{minutes // 60}س {minutes % 60}د" if minutes else "N/A"
+        duration = f"{minutes // 60}س {minutes % 60}د" if minutes > 0 else None
     else:
-        duration = f"{details.get('number_of_seasons', 0)} مواسم"
+        seasons = details.get('number_of_seasons', 0)
+        duration = f"{seasons} مواسم" if seasons > 0 else None
 
-    summary = details.get('overview', 'لا يوجد ملخص متوفر.')
-    if len(summary) > 400: # اختصار الملخص الطويل
-        summary = summary[:400] + "..."
+    summary = details.get('overview') # سيتم التحقق منه لاحقاً
         
-    # جلب أفضل 4 ممثلين
     cast = [actor['name'] for actor in credits.get('cast', [])[:4]]
-    cast_str = ", ".join(cast) if cast else "غير متوفر"
+    cast_str = ", ".join(cast) if cast else None
     
-    # جلب رابط التريلر (يوتيوب)
     trailer_key = next((v['key'] for v in videos.get('results', []) if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
     trailer_url = f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else None
     
-    # جلب البوستر (يفضل الخلفية "Backdrop" لأنها أجمل في تيليجرام)
-    poster_path = details.get('backdrop_path') or details.get('poster_path')
-    image_url = f"{BACKDROP_IMAGE_URL}{poster_path}" if poster_path else None
+    # (v2.2) البحث عن منصات (الأولوية للعراق ثم أمريكا)
+    watch_results = providers.get('results', {})
+    watch_providers = watch_results.get('IQ', {}).get('flatrate', []) or watch_results.get('US', {}).get('flatrate', [])
+    provider_names = [p['provider_name'] for p in watch_providers]
     
-    # --- بناء الرسالة (HTML) ---
-    post = f"<b>{post_title}</b>\n"
-    post += f"<b>{title} ({year})</b>\n"
-    post += "=======================\n\n"
+    # (v2.2) استخدام البوستر العمودي (w500)
+    poster_path = details.get('poster_path')
+    image_url = f"{POSTER_IMAGE_URL}{poster_path}" if poster_path else None
     
-    post += f"⭐️ <b>التقييم:</b> {rating}\n"
-    post += f"⏱ <b>المدة:</b> {duration}\n"
-    post += f"🎭 <b>بطولة:</b> {cast_str}\n\n"
+    # --- (v2.2) بناء الرسالة "الذكية" ---
+    post_parts = []
     
-    post += f"📝 <b>الملخص:</b>\n<i>{summary}</i>\n\n"
+    post_parts.append(f"<b>{post_title}</b>")
+    post_parts.append(f"<b>{title} ({year})</b>")
+    post_parts.append("=======================")
+
+    # (ذكاء: التحقق قبل الإضافة)
+    if rating: post_parts.append(f"⭐️ <b>التقييم:</b> {rating}")
+    if duration: post_parts.append(f"⏱ <b>المدة:</b> {duration}")
+    if cast_str: post_parts.append(f"🎭 <b>بطولة:</b> {cast_str}")
+
+    # إضافة سطر فاصل إذا كانت هناك أي تفاصيل
+    if rating or duration or cast_str:
+        post_parts.append("") # سطر فارغ
     
+    if summary: 
+        post_parts.append(f"📝 <b>الملخص:</b>\n<i>{summary[:400]}...</i>" if len(summary) > 400 else f"📝 <b>الملخص:</b>\n<i>{summary}</i>")
+        post_parts.append("") # سطر فارغ
+
+    if provider_names:
+        post_parts.append(f"📺 <b>متوفر للمشاهدة على:</b> {', '.join(provider_names)}")
+
     if trailer_url:
-        post += f"🍿 <a href='{trailer_url}'><b>شاهد المقطع الدعائي (Trailer)</b></a>\n"
+        post_parts.append(f"🍿 <a href='{trailer_url}'><b>شاهد المقطع الدعائي (Trailer)</b></a>")
         
-    post += f"\n---\n<i>*تابعنا للمزيد من {CHANNEL_USERNAME}*</i>"
+    # (v2.2) التذييل المخصص
+    post_parts.append("\n---\n<i>*تابعنا للمزيد من @F_Aflam*</i>")
     
-    return image_url, post
+    post_caption = "\n".join(post_parts)
+    
+    return image_url, post_caption
 
 # --- [4] تعريف المهام (الخطة v2.0) ---
 
 def run_job(endpoint, params, post_title, media_type='movie', pick_random=False):
-    """(v2.0) دالة عامة لتشغيل أي مهمة"""
+    """(v2.2) دالة عامة لتشغيل أي مهمة (محدثة لـ 4 تفاصيل)"""
     print(f"--- بدء مهمة [{post_title}] ---")
     response = None
     try:
@@ -181,11 +205,10 @@ def run_job(endpoint, params, post_title, media_type='movie', pick_random=False)
             print("!!! لا توجد نتائج من API.")
             return
 
-        # (v2.0) اختيار الفيلم (إما الأول أو عشوائي)
         if pick_random:
             media_to_post = random.choice(data['results'])
         else:
-            media_to_post = data['results'][0] # اختيار النتيجة الأولى
+            media_to_post = data['results'][0] 
 
         media_id = media_to_post.get('id')
         
@@ -193,15 +216,15 @@ def run_job(endpoint, params, post_title, media_type='movie', pick_random=False)
             print("!!! النتيجة المختارة لا تحتوي على ID.")
             return
             
-        # جلب كل التفاصيل (الاسم، الملخص، الممثلين، التريلر)
-        details, credits, videos = get_full_media_details(media_id, media_type)
+        # (v2.2) جلب كل التفاصيل (4 متغيرات)
+        details, credits, videos, providers = get_full_media_details(media_id, media_type)
         
         if not details:
             print("!!! فشل جلب التفاصيل الكاملة، إلغاء المهمة.")
             return
             
-        # تنسيق الرسالة وإرسالها
-        image_url, post_caption = format_telegram_post(details, credits, videos, post_title)
+        # (v2.2) إرسال كل التفاصيل (4 متغيرات)
+        image_url, post_caption = format_telegram_post(details, credits, videos, providers, post_title)
         
         if image_url:
             post_photo_to_telegram(image_url, post_caption)
@@ -215,21 +238,19 @@ def run_job(endpoint, params, post_title, media_type='movie', pick_random=False)
         post_text_to_telegram(f"🚨 حدث خطأ أثناء جلب [{post_title}]. يرجى المراجعة.")
 
 
-# --- [5] التشغيل الرئيسي (الذكي v2.1 - مع الاختيار اليدوي) ---
+# --- [5] التشغيل الرئيسي (الذكي v2.1) ---
 def main():
     print("==========================================")
-    print(f"بدء تشغيل (v2.1 - بوت Movie Byte - خطة المستخدم)...")
+    print(f"بدء تشغيل (v2.2 - بوت Movie Byte - احترافي)...")
     
     now = datetime.datetime.now(datetime.timezone.utc)
     current_hour_utc = now.hour
-    current_day_of_week = now.weekday() # 0 = الإثنين, 3 = الخميس, 4 = الجمعة
+    current_day_of_week = now.weekday() 
     
     print(f"الوقت الحالي (UTC): {now.strftime('%A, %H:%M')}")
 
     is_manual_run = os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
-    
-    # (v2.1) قراءة الاختيار اليدوي من ملف التشغيل YML
-    manual_task = os.environ.get('MANUAL_TASK_INPUT', 'auto') # الافتراضي هو 'auto'
+    manual_task = os.environ.get('MANUAL_TASK_INPUT', 'auto') 
     
     job_to_run = None
     
@@ -246,7 +267,7 @@ def main():
         elif manual_task == 'weekly_series':
             job_to_run = lambda: run_job("trending/tv/week", {}, "📺 مسلسل الأسبوع (اختبار يدوي)", "tv")
         elif manual_task == 'weekend_movie':
-            job_to_run = lambda: run_job("trending/movie/day", {}, "🍿 فيلم سهرة (اختبار يدوي)", "movie")
+            job_to_run = lambda: run_job("trending/movie/day", {}, "🍿 فيلم سهرة (اختيار يدوي)", "movie")
     
     # (الخطوة 2: إذا لم يكن تشغيلاً يدوياً، أو كان الاختيار 'auto'، استخدم الجدول الزمني)
     if job_to_run is None:
